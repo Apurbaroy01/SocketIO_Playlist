@@ -1,5 +1,5 @@
 import { getCollection } from "../config/database.js";
-import { CalculateTotal, createOrderDocument, generateOrderId } from "../utils/halper.js";
+import { CalculateTotal, createOrderDocument, generateOrderId, isValidStatusTransition } from "../utils/halper.js";
 
 export const orderHandelar = (io, socket) => {
     console.log("Order handler initialized for socket: " + socket.id);
@@ -96,15 +96,96 @@ export const orderHandelar = (io, socket) => {
         try {
             const ordersCollection = getCollection('orders');
             const orders = await ordersCollection.find({ customerPhone: data.customerPhone })
-            .sort({ createdAt: -1 })
-            .limit(20)
-            .toArray();
-            
+                .sort({ createdAt: -1 })
+                .limit(20)
+                .toArray();
+
             callback({ success: true, orders });
 
         } catch (error) {
             console.error('Error fetching orders:', error);
             callback({ success: false, message: 'Failed to fetch orders' });
+        }
+    })
+
+    // admin event
+
+    // admn login
+    socket.on('adminLogin', (data, callback) => {
+        try {
+            if (data.password === process.env.ADMIN_PASSWORD) {
+                socket.join('admins');
+                console.log(`Admin logged in: ${socket.id}`);
+                callback({ success: true, message: 'Admin login successful' });
+
+            } else {
+                callback({ success: false, message: 'Invalid password' });
+            }
+        } catch (error) {
+            callback({ success: false, message: 'Failed to login' });
+        }
+    })
+
+
+    // get all order for admin
+    socket.on('getAllOrders', async (data, callback) => {
+        try {
+            if (!socket.IsAdmin) {
+                return callback({ success: false, message: 'Unauthorized' });
+            }
+            const ordersCollection = getCollection('orders');
+            const filter = data?.status ? { status: data.status } : {}
+            const orders = await ordersCollection.find(filter)
+                .sort({ createdAt: -1 })
+                .limit(100)
+                .toArray();
+            callback({ success: true, orders });
+
+        } catch (error) {
+            console.error('Error fetching orders:', error);
+            callback({ success: false, message: 'Failed to load orders' });
+        }
+    })
+
+    // oder status update
+    socket.on('updateOrderStatus', async (data, callback) => {
+        try {
+            const ordersCollection = getCollection('orders');
+            const order = await ordersCollection.findOne({ orderId: data.orderId });
+            if (!order) {
+                return callback({ success: false, message: 'Order not found' });
+            }
+            if(!isValidStatusTransition(order.status, data.newStatus)){
+                return callback({ success: false, message: 'Invalid status transition' });
+            }
+
+            const result =await ordersCollection.findOneAndUpdate(
+                { orderId: data.orderId },
+                {
+                    $set: { status: data.newStatus, upadatedAt: new Date() },
+                    $push: {
+                        statusHistory:
+                        {
+                            status: data.newStatus,
+                            timestamp: new Date(),
+                            by: socket.id,
+                            note: "status updated by admin"
+                        }   
+                    }
+                },
+                { returnDocument: 'after' }
+
+            );
+            io.to(`order-${data.orderId}`).emit('orderStatusUpdated', { orderId: data.orderId, status: data.newStatus, order: result });
+
+            socket.to(`admins`).emit('orderStatusChanged ', { orderId: data.orderId, status: data.newStatus});
+
+            callback({ success: true, message: 'Order status updated successfully' });
+            
+
+        } catch (error) {
+            console.error('Error updating order status:', error);
+            callback({ success: false, message: 'Failed to update order status' });
         }
     })
 }
