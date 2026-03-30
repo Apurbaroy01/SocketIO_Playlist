@@ -3,14 +3,44 @@
 
 import dotenv from 'dotenv';
 import express from 'express';
+import http from 'http';
 import cors from 'cors';
 import { connectDB, getCollection, closeDB } from './config/database.js';
+import { Server } from 'socket.io';
+import { orderHandelar } from './Socket/oderhandler.js';
+import { generateOrderId } from './utils/halper.js';
 
 // Load environment variables
 dotenv.config();
 
 // Create Express app
 const app = express();
+
+// ✅ create http server
+const server = http.createServer(app);
+
+const io = new Server(server,
+  { cors: { origin: process.env.CLIENT_URL || '*', methods: ['GET', 'POST'], credentials: true } }
+);
+
+io.on("connection", (socket) => {
+  console.log("New client connected: " + socket.id);
+
+
+  socket.emit("connected", { message: `user ${socket.id} connected` });
+
+  console.log(generateOrderId());
+
+  // Handle orders from client
+  orderHandelar(io, socket);
+
+  // socket.on("disconnect", () => {
+  //   console.log("Client disconnected: " + socket.id);
+  // });
+});
+
+
+
 
 // Middleware
 app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
@@ -39,16 +69,16 @@ app.get('/api/orders', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(20)
       .toArray();
-    
-    res.json({ 
-      success: true, 
-      count: orders.length, 
-      orders 
+
+    res.json({
+      success: true,
+      count: orders.length,
+      orders
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -57,34 +87,34 @@ app.get('/api/orders', async (req, res) => {
 app.get('/api/orders/:orderId', async (req, res) => {
   try {
     const ordersCollection = getCollection('orders');
-    const order = await ordersCollection.findOne({ 
-      orderId: req.params.orderId 
+    const order = await ordersCollection.findOne({
+      orderId: req.params.orderId
     });
-    
+
     if (!order) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Order not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
       });
     }
-    
-    res.json({ 
-      success: true, 
-      order 
+
+    res.json({
+      success: true,
+      order
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'Route not found' 
+  res.status(404).json({
+    success: false,
+    message: 'Route not found'
   });
 });
 
@@ -119,7 +149,7 @@ process.on('SIGINT', shutdown);
 const PORT = process.env.PORT || 5000;
 
 connectDB().then(() => {
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════╗
 ║  🚀 Server Running                     ║
